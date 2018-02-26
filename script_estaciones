@@ -18,13 +18,13 @@ mex <- getData("GADM", country="MEX", level=1) %>%
 
 
 #     ---------------      NÚMERO TOTAL DE DÍAS QUE CUMPLEN X - Y CRITERIOS   ---------------------   #
-doMC::registerDoMC(8)                               ### do = 24 s; dopar = 7 DOPAR SOLO SIRVE EN LINUX
+doMC::registerDoMC(8)      ###  system.time; 996 estaciones; do = 24 mins; dopar = 7 mins DOPAR SOLO SIRVE EN LINUX
 foreach(i=estaciones$clave, .combine=rbind) %dopar% {
 estacion <- tryCatch({read.fwf(sprintf("http://smn.conagua.gob.mx/tools/RESOURCES/Diarios/%s.txt", i), 
                    widths=c(12, 6, 7, 7, 4), skip=21, fileEncoding = "latin1")}, 
                    error=function(err) NA) 
-if(estacion=="no lines") {"no lines"} else{ 
-estacion %<>% slice(-dim(.)[1]) %>% lapply(trimws) %>% as.data.frame()
+if(is.na(estacion) {NA} else{ 
+estacion %<>% slice(-dim(.)[1]) %>% lapply(trimws) %>% as.data.frame()   ## la última línea son puros guiones
 estacion[estacion=="Nulo"] <- NA
 estacion[2:5] <- lapply(estacion[2:5], as.character)         # esta conversión se puede ahorrar al momento
 estacion[2:5] <- lapply(estacion[2:5], as.numeric)           # de la lectura, quizá con readr::read_fwf
