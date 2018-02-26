@@ -1,0 +1,60 @@
+library(lubridate)     ###===================================================================###
+library(magrittr)      ###     utilizando información de smn.conagua                         ###
+library(dplyr)         ###          extrae el promedio de días con cierto criterio           ###
+library(readr)         ###             lógico, tipo SQL, con corridas para x número de días  ### 
+library(foreach)       ###     -------------   PROCESO PARALELIZADO   --------------------   ###
+library(rgdal)         ###===================================================================###
+library(raster)
+library(gstat)
+library(ggplot2)
+
+###     ------  LECTURA DE ARCHIVOS (área de interés, lista de estaciones y límites administrativos)
+area <- new("Extent", xmin = 288904.940880315, xmax = 674139.044681855, 
+            ymin = 2014546.78858776, ymax = 2268018.12886378) 
+### estaciones ES EL ARCHIVO EN dput
+mex <- getData("GADM", country="MEX", level=1) %>%
+  spTransform(CRS("+proj=utm +zone=14 +datum=WGS84 +units=m +no_defs +ellps=WGS84 +towgs84=0,0,0")) 
+
+
+#     ---------------      NÚMERO TOTAL DE DÍAS QUE CUMPLEN X - Y CRITERIOS   ---------------------   #
+doMC::registerDoMC(8)                               ### do = 24 s; dopar = 7 DOPAR SOLO SIRVE EN LINUX
+foreach(i=estaciones$clave, .combine=rbind) %dopar% {
+estacion <- tryCatch({read.fwf(sprintf("http://smn.conagua.gob.mx/tools/RESOURCES/Diarios/%s.txt", i), 
+                   widths=c(12, 6, 7, 7, 4), skip=21, fileEncoding = "latin1")}, 
+                   error=function(err) NA) 
+if(estacion=="no lines") {"no lines"} else{ 
+estacion %<>% slice(-dim(.)[1]) %>% lapply(trimws) %>% as.data.frame()
+estacion[estacion=="Nulo"] <- NA
+estacion[2:5] <- lapply(estacion[2:5], as.character)         # esta conversión se puede ahorrar al momento
+estacion[2:5] <- lapply(estacion[2:5], as.numeric)           # de la lectura, quizá con readr::read_fwf
+
+### número de días totales
+estacion %>% mutate(V1=dmy(estacion$V1, tz="America/Mexico_City")) %>% 
+  group_by(year(V1)) %>% #count(criterio=V5 < 0) %>% filter(criterio == T)  %>% 
+  summarise(n=max(V2)) %>%
+  colMeans(na.rm = T)}
+} -> medias
+
+estaciones$promedio <-  as.data.frame(medias)[,2] %>% as.character() %>% as.numeric()
+coordinates(estaciones) <- c("x", "y")
+
+###   ---  K R I G G I N G  -  N. T O T A L - Q U E  -  C U M P L E N -  C R I T E R I O ----###
+grd <- expand.grid(x=seq(from=bbox(area)[1,1], to=bbox(area)[1,2], by=10000), 
+                   y=seq(from=bbox(area)[2,1], to=bbox(area)[2,2], by=10000))
+coordinates(grd) <- c("x", "y")
+gridded(grd) <- T
+idw <- idw(formula =  n ~ 1, locations = medias_xy[!is.na(medias_xy$n),], 
+           newdata = grd)
+idw.output = as.data.frame(idw)  
+names(idw.output)[1:3] <- c("long", "lat", "var1.pred") 
+
+ggplot() + geom_tile(data = idw.output, aes(x = long, y = lat, fill = var1.pred)) + 
+  geom_point(data = as.data.frame(medias_xy), aes(x,y),shape = 4, 
+             colour = "tomato", size=0.6, alpha=0.8) + xlab("") + ylab("") +
+             labs(title="promedio de precipitación máx") +
+             geom_polygon(data=mex, aes(x=long, y=lat, group=group), colour="cornsilk",
+                          alpha=0) +
+             coord_cartesian(xlim=c(extent(ests_monarca)[1], extent(ests_monarca)[2]), 
+                             ylim=c(extent(ests_monarca)[3], extent(ests_monarca)[4]))
+
+### ya después se pueden hacer estadísticas zonales en polígonos y obtener boxplots y density plots
